@@ -1,67 +1,191 @@
+// index.js з try/catch для стабільності
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const { createClient } = require('@supabase/supabase-js');
+const {
+  handleStart,
+  handleGameAnswer,
+  sendMessage,
+  sendPhotoGroup,
+  sendQuestion,
+  sendResult,
+  getUser,
+  saveUser,
+  updateUser,
+  getStoredMessageId,
+  sendAfterPaymentMessages,
+  sendAfterPaymentFollowup,
+  sendStartSubscription,
+  markUserAsPending,
+  isUserPending,
+  removePendingUser,
+  isCooldownPassed,
+  escapeHTML,
+  sendSticker,
+  sendPhotoToAdmin,
+  approvePayment,
+  logError
+} = require('./utils');
+
 const app = express();
 app.use(express.json());
 
 const TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID;
 const TELEGRAM_API = `https://api.telegram.org/bot${TOKEN}`;
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// ✉️ Відправити повідомлення
-async function sendMessage(chatId, text, extra = {}) {
-  await axios.post(`${TELEGRAM_API}/sendMessage`, {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-    ...extra
-  });
-}
-
-// 📸 Відправити фото адміну зі скріном і кнопками
-async function sendPhotoToAdmin(userChatId, fileId, displayName) {
-  const caption = `📥 Новий скріншот оплати від <b>${displayName}</b>\nchat_id: <code>${userChatId}</code>`;
-  await axios.post(`${TELEGRAM_API}/sendPhoto`, {
-    chat_id: ADMIN_ID,
-    photo: fileId,
-    caption,
-    parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: [[
-        { text: '✅ Прийняти', callback_data: `approve_${userChatId}` },
-        { text: '❌ Відхилити', callback_data: `reject_${userChatId}` }
-      ]]
-    }
-  });
-}
-
-// === Webhook endpoint ===
 app.post('/', async (req, res) => {
   const data = req.body;
   const msg = data.message || data.callback_query?.message;
-  const chatId = msg.chat.id;
+  if (!msg || !msg.chat) return res.send('ok');
 
-  // 📷 Фото
-  if (data.message?.photo) {
-    const fileId = data.message.photo.pop().file_id;
-    const name = data.message.chat.first_name || '';
-    const username = data.message.chat.username ? `@${data.message.chat.username}` : '';
-    const display = `${name} ${username}`.trim();
-    await sendMessage(chatId, '✅ Скріншот отримано. Очікуй підтвердження.');
-    await sendPhotoToAdmin(chatId, fileId, display);
+  const chatId = msg.chat.id;
+  const text = data.message?.text;
+  const callbackData = data.callback_query?.data;
+  const callbackPrefix = callbackData?.split('_')[0];
+
+  // === 🔘 approve/reject buttons
+  if (callbackPrefix === 'approve' || callbackPrefix === 'reject') {
+    try {
+      const targetChatId = callbackData.split('_')[1];
+      const { data: messages } = await supabase.from('admin_messages').select('*');
+      const row = messages.find(row => String(row.chat_id) === String(targetChatId));
+      const { data: userData } = await axios.get(`${TELEGRAM_API}/getChat?chat_id=${targetChatId}`);
+      const firstName = userData?.result?.first_name || '';
+      const username = userData?.result?.username ? `@${userData.result.username}` : '';
+      const display = `${firstName} ${username}`.trim();
+      if (!row) {
+        await sendMessage(ADMIN_ID, `⚠️ Повторна дія або запис уже видалено.`);
+        return res.send('ok');
+      }
+
+      await supabase.from('admin_messages').delete().eq('chat_id', targetChatId);
+
+      if (callbackPrefix === 'approve') {
+        await approvePayment(targetChatId);
+        await removePendingUser(targetChatId);
+
+        await sendMessage(ADMIN_ID, `✅ Оплату підтверджено для <code>${targetChatId}</code> (${escapeHTML(display)})`, { parse_mode: 'HTML' });
+
+      } else {
+        await removePendingUser(targetChatId);
+        await sendMessage(targetChatId, '⛔️ Скрін не пройшов перевірку. Спробуй ще раз або напиши нам.');
+        await sendMessage(ADMIN_ID, `❌ Оплату відхилено для користувача <code>${targetChatId}</code> (${escapeHTML(display)})`, { parse_mode: 'HTML' });
+
+      }
+
+      if (row.message_id) {
+        await axios.post(`${TELEGRAM_API}/deleteMessage`, {
+          chat_id: ADMIN_ID,
+          message_id: row.message_id
+        });
+      }
+    } catch (e) {
+      console.error('❌ Approve/Reject error:', e);
+    }
     return res.send('ok');
   }
 
-  // Кнопки approve/reject
-  const callbackData = data.callback_query?.data;
-  if (callbackData?.startsWith('approve_') || callbackData?.startsWith('reject_')) {
-    const targetChatId = callbackData.split('_')[1];
-    if (callbackData.startsWith('approve_')) {
-      await sendMessage(targetChatId, '🎉 Оплату підтверджено! Ти в грі 🚀');
-      await sendMessage(ADMIN_ID, `✅ Оплату підтверджено для <code>${targetChatId}</code>`, { parse_mode: 'HTML' });
-    } else {
-      await sendMessage(targetChatId, '⛔️ Скрін не пройшов перевірку. Спробуй ще раз або напиши нам.');
-      await sendMessage(ADMIN_ID, `❌ Оплату відхилено для <code>${targetChatId}</code>`, { parse_mode: 'HTML' });
+  // === 🖼 ФОТО
+  if (data.message?.photo) {
+    try {
+      const bestPhoto = data.message.photo.at(-1);
+      const fileId = bestPhoto.file_id;
+      const name = msg.chat.first_name || "";
+      const username = msg.chat.username ? `@${msg.chat.username}` : chatId;
+      const display = name || username;
+
+      if (await isUserPending(chatId)) {
+        await sendPhotoToAdmin(chatId, fileId, display);
+        await sendMessage(chatId, '✅ Скріншот отримано. Очікуй підтвердження.');
+      } else {
+        await sendMessage(chatId, '⚠️ Схоже, що ти ще не натискала кнопку "Приєднатись до кімнати". Спробуй спочатку її.');
+      }
+    } catch (e) {
+      console.error('❌ Photo error:', e);
+    }
+    return res.send('ok');
+  }
+
+  // === 🎭 Стікери
+  if (msg.sticker) {
+    try {
+      const stickerId = msg.sticker.file_id;
+      await sendMessage(chatId, `🎭 Отримано file_id стікера:\n\n<code>${escapeHTML(stickerId)}</code>`, { parse_mode: 'HTML' });
+    } catch (e) {
+      console.error('❌ Sticker error:', e);
+    }
+    return res.send('ok');
+  }
+
+  // === 🎧 Аудіо
+  if (msg.audio || msg.voice) {
+    try {
+      const fileId = (msg.audio || msg.voice).file_id;
+      await sendMessage(chatId, `🎧 Отримано file_id звуку:\n\n<code>${escapeHTML(fileId)}</code>`, { parse_mode: 'HTML' });
+    } catch (e) {
+      console.error('❌ Audio error:', e);
+    }
+    return res.send('ok');
+  }
+
+  // === 📎 PDF
+  if (msg.document?.mime_type === 'application/pdf') {
+    try {
+      const fileId = msg.document.file_id;
+      await sendMessage(chatId, `📎 Отримано PDF файл!\n\n<code>${escapeHTML(fileId)}</code>`, { parse_mode: 'HTML' });
+    } catch (e) {
+      console.error('❌ PDF error:', e);
+    }
+    return res.send('ok');
+  }
+
+  // === 🚀 /start
+  if (text === '/start') {
+    try {
+      await handleStart(chatId);
+    } catch (e) {
+      console.error('❌ Start error:', e);
+    }
+    return res.send('ok');
+  }
+
+  // === 🎯 CALLBACK
+  if (callbackData) {
+    try {
+      if (callbackData === 'start_game') {
+        if (!(await isCooldownPassed(chatId, 'start_game', 2))) {
+          await sendMessage(chatId, '⏳ Не так швидко');
+          return res.send('ok');
+        }
+        await saveUser(chatId, 1, []);
+        await sendQuestion(chatId, 1);
+      }
+
+      if (callbackData.startsWith('answer_')) {
+        if (!(await isCooldownPassed(chatId, callbackData, 3))) {
+          await sendMessage(chatId, '⏳ Не так швидко');
+          return res.send('ok');
+        }
+        await handleGameAnswer(chatId, callbackData, data);
+      }
+
+      if (callbackData === 'after_payment_1') {
+        await sendAfterPaymentMessages(chatId);
+      }
+
+      if (callbackData === 'start_payment_flow') {
+        await sendAfterPaymentFollowup(chatId);
+      }
+
+      if (callbackData === 'start_subscription') {
+        await markUserAsPending(chatId);
+        await sendStartSubscription(chatId);
+      }
+    } catch (e) {
+      console.error('❌ Callback error:', e);
     }
     return res.send('ok');
   }
