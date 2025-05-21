@@ -245,11 +245,6 @@ async function sendAfterPaymentFollowup(chatId) {
         .select('*')
         .order('order');
 
-    const display = await getUserDisplay(chatId);
-    await sendMessage(ADMIN_ID, `💳 Клієнт <b>${escapeHTML(display)}</b> перейшов до оплати`, {
-        parse_mode: 'HTML'
-    });
-
     if (error) {
         console.error('❌ Помилка Supabase (after_payment_followup):', error.message);
         await sendMessage(chatId, '⚠️ Сталася помилка. Спробуй пізніше.');
@@ -320,6 +315,11 @@ async function sendStartSubscription(chatId) {
         .from('after_payment_followup') // ✅ правильна таблиця
         .select('*')
         .order('order');
+
+            const display = await getUserDisplay(chatId);
+    await sendMessage(ADMIN_ID, `💳 Клієнт <b>${escapeHTML(display)}</b> перейшов до оплати`, {
+        parse_mode: 'HTML'
+    });
 
     if (error) {
         console.error('❌ Помилка Supabase (sendStartSubscription):', error.message);
