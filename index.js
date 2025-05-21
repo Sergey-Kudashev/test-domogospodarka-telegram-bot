@@ -7,6 +7,7 @@ const {
   handleStart,
   handleGameAnswer,
   sendMessage,
+  getUserDisplay,
   sendPhotoGroup,
   sendQuestion,
   sendResult,
@@ -52,10 +53,8 @@ app.post('/', async (req, res) => {
       const targetChatId = callbackData.split('_')[1];
       const { data: messages } = await supabase.from('admin_messages').select('*');
       const row = messages.find(row => String(row.chat_id) === String(targetChatId));
-      const { data: userData } = await axios.get(`${TELEGRAM_API}/getChat?chat_id=${targetChatId}`);
-      const firstName = userData?.result?.first_name || '';
-      const username = userData?.result?.username ? `@${userData.result.username}` : '';
-      const display = `${firstName} ${username}`.trim();
+      const display = await getUserDisplay(targetChatId);
+
       if (!row) {
         await sendMessage(ADMIN_ID, `⚠️ Повторна дія або запис уже видалено.`);
         return res.send('ok');
@@ -160,6 +159,11 @@ app.post('/', async (req, res) => {
           await sendMessage(chatId, '⏳ Не так швидко');
           return res.send('ok');
         }
+        const display = await getUserDisplay(chatId);
+        await sendMessage(ADMIN_ID, `🧩 Користувач <b>${escapeHTML(display)}</b> розпочав гру`, {
+          parse_mode: 'HTML'
+        });
+
         await saveUser(chatId, 1, []);
         await sendQuestion(chatId, 1);
       }
