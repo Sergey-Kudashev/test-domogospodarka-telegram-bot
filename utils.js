@@ -55,6 +55,7 @@ async function handleStart(chatId) {
 }
 
 async function handleGameAnswer(chatId, callbackData, data) {
+    const answer = parseInt(callbackData.split('_')[1], 10);
     const msgIdFromQuery = data.callback_query.message.message_id;
 
     // Прибираємо кнопки
@@ -74,7 +75,7 @@ async function handleGameAnswer(chatId, callbackData, data) {
         text: `${randomIcon} Обрана відповідь ${answer}`
     });
 
-    const answer = parseInt(callbackData.split('_')[1], 10);
+
 
 
     const storedIdRes = await supabase
