@@ -169,10 +169,10 @@ app.post('/', async (req, res) => {
       }
 
       if (callbackData.startsWith('answer_')) {
-        if (!(await isCooldownPassed(chatId, callbackData, 3))) {
-          await sendMessage(chatId, '⏳ Не так швидко');
-          return res.send('ok');
-        }
+        // if (!(await isCooldownPassed(chatId, callbackData, 3))) {
+        //   await sendMessage(chatId, '⏳ Не так швидко');
+        //   return res.send('ok');
+        // }
         await handleGameAnswer(chatId, callbackData, data);
       }
 

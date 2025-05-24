@@ -55,17 +55,7 @@ async function handleStart(chatId) {
 }
 
 async function handleGameAnswer(chatId, callbackData, data) {
-    const answer = parseInt(callbackData.split('_')[1], 10);
     const msgIdFromQuery = data.callback_query.message.message_id;
-
-    const storedIdRes = await supabase
-        .from('users')
-        .select('message_id')
-        .eq('chat_id', chatId)
-        .single();
-
-    const storedMsgId = storedIdRes.data?.message_id;
-    if (String(msgIdFromQuery) !== String(storedMsgId)) return;
 
     // Прибираємо кнопки
     await axios.post(`${TELEGRAM_API}/editMessageReplyMarkup`, {
@@ -83,6 +73,19 @@ async function handleGameAnswer(chatId, callbackData, data) {
         message_id: msgIdFromQuery,
         text: `${randomIcon} Обрана відповідь ${answer}`
     });
+
+    const answer = parseInt(callbackData.split('_')[1], 10);
+
+
+    const storedIdRes = await supabase
+        .from('users')
+        .select('message_id')
+        .eq('chat_id', chatId)
+        .single();
+
+    const storedMsgId = storedIdRes.data?.message_id;
+    if (String(msgIdFromQuery) !== String(storedMsgId)) return;
+
 
     const user = await getUser(chatId);
     if (user.finished) return;
@@ -316,7 +319,7 @@ async function sendStartSubscription(chatId) {
         .select('*')
         .order('order');
 
-            const display = await getUserDisplay(chatId);
+    const display = await getUserDisplay(chatId);
     await sendMessage(ADMIN_ID, `💳 Клієнт <b>${escapeHTML(display)}</b> перейшов до оплати`, {
         parse_mode: 'HTML'
     });
