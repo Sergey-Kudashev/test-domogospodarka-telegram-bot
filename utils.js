@@ -378,8 +378,17 @@ async function getUser(chatId) {
 }
 
 async function saveUser(chatId, step, answers) {
-    await supabase.from('users').insert({ chat_id: chatId, step, answers: answers.join(','), finished: false });
+  await supabase.from('users').upsert({
+    chat_id: chatId,
+    step,
+    answers: answers.join(','),
+    finished: false
+  }, {
+    onConflict: ['chat_id'],
+    ignoreDuplicates: true // 👈 оновлення НЕ буде, якщо запис вже є
+  });
 }
+
 
 async function updateUser(chatId, step, answers, finished = false) {
   await supabase.from('users').upsert({
