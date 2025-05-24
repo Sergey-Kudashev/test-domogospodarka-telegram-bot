@@ -19,6 +19,25 @@ async function sendMessage(chatId, text, options = {}) {
     return res.data.result.message_id;
 }
 
+async function sendPhotoGroup(chatId, photoIds) {
+    const media = photoIds.map(id => ({ type: 'photo', media: id }));
+    await axios.post(`${TELEGRAM_API}/sendMediaGroup`, {
+        chat_id: chatId,
+        media
+    });
+}
+
+async function sendSticker(chatId, sticker) {
+    await axios.post(`${TELEGRAM_API}/sendSticker`, { chat_id: chatId, sticker });
+}
+
+async function sendDocument(chatId, fileId) {
+    await axios.post(`${TELEGRAM_API}/sendDocument`, {
+        chat_id: chatId,
+        document: fileId
+    });
+}
+
 async function handleStart(chatId) {
     const { data: welcomeData, error } = await supabase
         .from('welcome')
@@ -55,79 +74,44 @@ async function handleStart(chatId) {
 }
 
 async function handleGameAnswer(chatId, callbackData, data) {
-    const answer = parseInt(callbackData.split('_')[1], 10);
-    const msgIdFromQuery = data.callback_query.message.message_id;
+  const answer = parseInt(callbackData.split('_')[1], 10);
+  const msgIdFromQuery = data.callback_query.message.message_id;
+  const icon = ['☑️', '🟢', '🎯', '🧩', '📍', '⚡️', '🚀'][Math.floor(Math.random() * 7)];
 
-    // Прибираємо кнопки
-    await axios.post(`${TELEGRAM_API}/editMessageReplyMarkup`, {
-        chat_id: chatId,
-        message_id: msgIdFromQuery,
-        reply_markup: { inline_keyboard: [] }
-    });
+  await axios.post(`${TELEGRAM_API}/editMessageText`, {
+    chat_id: chatId,
+    message_id: msgIdFromQuery,
+    text: `${icon} Обрана відповідь ${answer}`,
+    reply_markup: { inline_keyboard: [] }
+  });
 
-    // Оновлюємо текст
-    const icons = ['☑️', '🟢', '🎯', '🧩', '📍', '⚡️', '🚀'];
-    const randomIcon = icons[Math.floor(Math.random() * icons.length)];
+  const { data: userData } = await supabase.from('users').select('*').eq('chat_id', chatId).single();
+  if (!userData || userData.finished || String(userData.message_id) !== String(msgIdFromQuery)) return;
 
-    await axios.post(`${TELEGRAM_API}/editMessageText`, {
-        chat_id: chatId,
-        message_id: msgIdFromQuery,
-        text: `${randomIcon} Обрана відповідь ${answer}`
-    });
+  const answers = userData.answers?.split(',').map(Number) || [];
+  answers[userData.step - 1] = answer;
+  const nextStep = userData.step + 1;
+  const finished = nextStep > 7;
 
+  await supabase.from('users').update({
+    step: finished ? userData.step : nextStep,
+    answers: answers.join(','),
+    finished
+  }).eq('chat_id', chatId);
 
-
-
-    const storedIdRes = await supabase
-        .from('users')
-        .select('message_id')
-        .eq('chat_id', chatId)
-        .single();
-
-    const storedMsgId = storedIdRes.data?.message_id;
-    if (String(msgIdFromQuery) !== String(storedMsgId)) return;
-
-
-    const user = await getUser(chatId);
-    if (user.finished) return;
-
-    const answers = user.answers;
-    const step = user.step;
-    answers[step - 1] = answer;
-
-    if (step < 7) {
-        await updateUser(chatId, step + 1, answers);
-        await sendQuestion(chatId, step + 1);
-    } else {
-        await updateUser(chatId, step, answers, true);
-        await sendMessage(chatId, `🎮 ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ 🎮`);
-        await sendResult(chatId, answers);
-    }
-}
-
-async function sendPhotoGroup(chatId, photoIds) {
-    const media = photoIds.map(id => ({ type: 'photo', media: id }));
-    await axios.post(`${TELEGRAM_API}/sendMediaGroup`, {
-        chat_id: chatId,
-        media
-    });
-}
-
-async function sendSticker(chatId, sticker) {
-    await axios.post(`${TELEGRAM_API}/sendSticker`, { chat_id: chatId, sticker });
-}
-
-async function sendDocument(chatId, fileId) {
-    await axios.post(`${TELEGRAM_API}/sendDocument`, {
-        chat_id: chatId,
-        document: fileId
-    });
+  if (finished) {
+    await sendMessage(chatId, `🎮 ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ 🎮`);
+    await sendResult(chatId, answers);
+  } else {
+    await sendQuestion(chatId, nextStep);
+  }
 }
 
 // ==== 🧠 ГРА ====
 async function sendQuestion(chatId, number) {
+  try {
     const { data, error } = await supabase.from('questions').select('*').eq('question_number', number).single();
-    if (error || !data) return await sendMessage(chatId, '⚠️ Запитання не знайдено.');
+    if (error || !data) throw new Error('⚠️ Запитання не знайдено.');
 
     await sendMessage(chatId, `Питання ${number}:
 
@@ -137,14 +121,17 @@ ${data.question_text}`);
     if (photos.length) await sendPhotoGroup(chatId, photos);
 
     const buttons = [
-        [1, 2, 3].map(i => ({ text: `${i}`, callback_data: `answer_${i}` })),
-        [4, 5, 6].map(i => ({ text: `${i}`, callback_data: `answer_${i}` }))
+      [1, 2, 3].map(i => ({ text: `${i}`, callback_data: `answer_${i}` })),
+      [4, 5, 6].map(i => ({ text: `${i}`, callback_data: `answer_${i}` }))
     ];
     const msgId = await sendMessage(chatId, '🧠 Обери той, що найкраще відображає тебе: 👇', {
-        reply_markup: { inline_keyboard: buttons }
+      reply_markup: { inline_keyboard: buttons }
     });
-
     await supabase.from('users').update({ message_id: msgId }).eq('chat_id', chatId);
+  } catch (e) {
+    console.error('sendQuestion error:', e.message);
+    await sendMessage(chatId, '⚠️ Сталася помилка з питанням.');
+  }
 }
 
 async function sendResult(chatId, answers) {
