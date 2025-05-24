@@ -382,13 +382,14 @@ async function saveUser(chatId, step, answers) {
 }
 
 async function updateUser(chatId, step, answers, finished = false) {
-    const { data } = await supabase.from('users').select('chat_id').eq('chat_id', chatId).maybeSingle();
-    if (data) {
-        await supabase.from('users').update({ step, answers: answers.join(','), finished }).eq('chat_id', chatId);
-    } else {
-        await saveUser(chatId, step, answers);
-    }
+  await supabase.from('users').upsert({
+    chat_id: chatId,
+    step,
+    answers: answers.join(','),
+    finished
+  }, { onConflict: ['chat_id'] });
 }
+
 
 async function getStoredMessageId(chatId) {
     const { data } = await supabase.from('users').select('message_id').eq('chat_id', chatId).single();
