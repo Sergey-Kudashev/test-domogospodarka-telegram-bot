@@ -19,6 +19,92 @@ async function sendMessage(chatId, text, options = {}) {
     return res.data.result.message_id;
 }
 
+async function handleStart(chatId) {
+    const { data: welcomeData, error } = await supabase
+        .from('welcome')
+        .select('*')
+        .limit(1)
+        .single();
+
+    if (error || !welcomeData) {
+        console.error('Помилка Supabase:', error?.message || 'Порожня таблиця');
+        await sendMessage(chatId, '⚠️ Сталася помилка. Спробуй пізніше.');
+        return;
+    }
+
+    const { sticker_id, welcome_text_1, welcome_text_2 } = welcomeData;
+
+    if (sticker_id) {
+        await axios.post(`${TELEGRAM_API}/sendSticker`, {
+            chat_id: chatId,
+            sticker: sticker_id
+        });
+    }
+
+    if (welcome_text_1) {
+        await sendMessage(chatId, welcome_text_1);
+    }
+
+    if (welcome_text_2) {
+        await sendMessage(chatId, welcome_text_2, {
+            reply_markup: {
+                inline_keyboard: [[{ text: '🎮 Розпочати гру', callback_data: 'start_game' }]]
+            }
+        });
+    }
+}
+
+async function handleGameAnswer(chatId, callbackData, data) {
+    const answer = parseInt(callbackData.split('_')[1], 10);
+    const msgIdFromQuery = data.callback_query.message.message_id;
+
+    // Прибираємо кнопки
+    await axios.post(`${TELEGRAM_API}/editMessageReplyMarkup`, {
+        chat_id: chatId,
+        message_id: msgIdFromQuery,
+        reply_markup: { inline_keyboard: [] }
+    });
+
+    // Оновлюємо текст
+    const icons = ['☑️', '🟢', '🎯', '🧩', '📍', '⚡️', '🚀'];
+    const randomIcon = icons[Math.floor(Math.random() * icons.length)];
+
+    await axios.post(`${TELEGRAM_API}/editMessageText`, {
+        chat_id: chatId,
+        message_id: msgIdFromQuery,
+        text: `${randomIcon} Обрана відповідь ${answer}`
+    });
+
+
+
+
+    const storedIdRes = await supabase
+        .from('users')
+        .select('message_id')
+        .eq('chat_id', chatId)
+        .single();
+
+    const storedMsgId = storedIdRes.data?.message_id;
+    if (String(msgIdFromQuery) !== String(storedMsgId)) return;
+
+
+    const user = await getUser(chatId);
+    if (user.finished) return;
+
+    const answers = user.answers;
+    const step = user.step;
+    answers[step - 1] = answer;
+
+    if (step < 7) {
+        await updateUser(chatId, step + 1, answers);
+        await sendQuestion(chatId, step + 1);
+    } else {
+        await updateUser(chatId, step, answers, true);
+        await sendMessage(chatId, `🎮 ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ 🎮`);
+        await sendResult(chatId, answers);
+    }
+}
+
 async function sendPhotoGroup(chatId, photoIds) {
     const media = photoIds.map(id => ({ type: 'photo', media: id }));
     await axios.post(`${TELEGRAM_API}/sendMediaGroup`, {
@@ -38,70 +124,10 @@ async function sendDocument(chatId, fileId) {
     });
 }
 
-async function handleStart(chatId) {
-    try {
-        const { data, error } = await supabase.from('welcome').select('*').limit(1).single();
-        if (error || !data) throw new Error(error?.message || 'Порожня таблиця');
-        const { sticker_id, welcome_text_1, welcome_text_2 } = data;
-
-        const actions = [];
-        if (sticker_id) actions.push(sendSticker(chatId, sticker_id));
-        if (welcome_text_1) actions.push(sendMessage(chatId, welcome_text_1));
-        if (welcome_text_2) {
-            actions.push(sendMessage(chatId, welcome_text_2, {
-                reply_markup: {
-                    inline_keyboard: [[{ text: '🎮 Розпочати гру', callback_data: 'start_game' }]]
-                }
-            }));
-        }
-        await Promise.all(actions);
-    } catch (e) {
-        console.error('handleStart error:', e.message);
-        await sendMessage(chatId, '⚠️ Сталася помилка. Спробуй пізніше.');
-    }
-}
-
-async function handleGameAnswer(chatId, callbackData, data) {
-  const answer = parseInt(callbackData.split('_')[1], 10);
-  const msgIdFromQuery = data.callback_query.message.message_id;
-  const icon = ['☑️', '🟢', '🎯', '🧩', '📍', '⚡️', '🚀'][Math.floor(Math.random() * 7)];
-
-  await axios.post(`${TELEGRAM_API}/editMessageText`, {
-    chat_id: chatId,
-    message_id: msgIdFromQuery,
-    text: `${icon} Обрана відповідь ${answer}`,
-    reply_markup: { inline_keyboard: [] }
-  });
-
-  const { data: userData } = await supabase.from('users').select('*').eq('chat_id', chatId).single();
-  if (!userData || userData.finished || String(userData.message_id) !== String(msgIdFromQuery)) return;
-
-  const answers = userData.answers?.split(',').map(Number) || [];
-  answers[userData.step - 1] = answer;
-  const nextStep = userData.step + 1;
-  const finished = nextStep > 7;
-
-  await supabase.from('users').update({
-    step: finished ? userData.step : nextStep,
-    answers: answers.join(','),
-    finished
-  }).eq('chat_id', chatId);
-
-  if (finished) {
-    await sendMessage(chatId, `🎮 ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ 🎮`);
-    await sendResult(chatId, answers);
-  } else {
-    await sendQuestion(chatId, nextStep);
-  }
-}
-
-
-
 // ==== 🧠 ГРА ====
 async function sendQuestion(chatId, number) {
-  try {
     const { data, error } = await supabase.from('questions').select('*').eq('question_number', number).single();
-    if (error || !data) throw new Error('⚠️ Запитання не знайдено.');
+    if (error || !data) return await sendMessage(chatId, '⚠️ Запитання не знайдено.');
 
     await sendMessage(chatId, `Питання ${number}:
 
@@ -111,62 +137,67 @@ ${data.question_text}`);
     if (photos.length) await sendPhotoGroup(chatId, photos);
 
     const buttons = [
-      [1, 2, 3].map(i => ({ text: `${i}`, callback_data: `answer_${i}` })),
-      [4, 5, 6].map(i => ({ text: `${i}`, callback_data: `answer_${i}` }))
+        [1, 2, 3].map(i => ({ text: `${i}`, callback_data: `answer_${i}` })),
+        [4, 5, 6].map(i => ({ text: `${i}`, callback_data: `answer_${i}` }))
     ];
     const msgId = await sendMessage(chatId, '🧠 Обери той, що найкраще відображає тебе: 👇', {
-      reply_markup: { inline_keyboard: buttons }
+        reply_markup: { inline_keyboard: buttons }
     });
+
     await supabase.from('users').update({ message_id: msgId }).eq('chat_id', chatId);
-  } catch (e) {
-    console.error('sendQuestion error:', e.message);
-    await sendMessage(chatId, '⚠️ Сталася помилка з питанням.');
-  }
 }
 
 async function sendResult(chatId, answers) {
-  try {
     const counts = Array(6).fill(0);
     answers.forEach(a => counts[a - 1]++);
+
     const max = Math.max(...counts);
     const candidates = counts.map((c, i) => (c === max ? i + 1 : null)).filter(Boolean);
     const result = candidates[candidates.length - 1];
-
     const display = await getUserDisplay(chatId);
-    await sendMessage(ADMIN_ID, `📊 Користувач <b>${escapeHTML(display)}</b> отримав результат <b>${result}</b>`);
+    await sendMessage(ADMIN_ID, `📊 Користувач <b>${escapeHTML(display)}</b> отримав результат <b>${result}</b>`, {
+        parse_mode: 'HTML'
+    });
 
-    const { data, error } = await supabase.from('results').select('*').eq('result_number', result).single();
-    if (error || !data) throw new Error('Результат не знайдено');
 
-    await Promise.all([
-      sendMessage(chatId, data.text1),
-      sendMessage(chatId, data.text2),
-      sendDocument(chatId, data.pdf_id)
-    ]);
+    const { data, error } = await supabase
+        .from('results')
+        .select('*')
+        .eq('result_number', result)
+        .single();
 
+    if (error || !data) {
+        await sendMessage(chatId, '⚠️ Результат не знайдено.');
+        return;
+    }
+
+    // Надсилаємо основний результат
+    await sendMessage(chatId, data.text1);
+    await sendMessage(chatId, data.text2);
+    await sendDocument(chatId, data.pdf_id);
+
+    // ⏱ Follow-up через 60 секунд у фоні
     setTimeout(async () => {
-      try {
-        const { data: f } = await supabase.from('followup').select('*').limit(1).single();
-        if (f) {
-          await Promise.all([
-            sendMessage(chatId, f.message1),
-            sendMessage(chatId, f.message2)
-          ]);
+        try {
+            const f = await supabase.from('followup').select('*').limit(1).single();
+            if (f.data) {
+                await sendMessage(chatId, f.data.message1);
+                await sendMessage(chatId, f.data.message2);
+            }
+
+            await sendMessage(chatId, '🎭 Готова продовжити свою гру в новій реальності?', {
+                reply_markup: {
+                    inline_keyboard: [[{ text: '🧩 Що буде в цій грі:', callback_data: 'after_payment_1' }]]
+                }
+            });
+
+            // Очищаємо користувача
+            await supabase.from('users').delete().eq('chat_id', chatId);
+        } catch (e) {
+            console.error('❌ Помилка у follow-up:', e);
         }
-        await sendMessage(chatId, '🎭 Готова продовжити свою гру в новій реальності?', {
-          reply_markup: {
-            inline_keyboard: [[{ text: '🧩 Що буде в цій грі:', callback_data: 'after_payment_1' }]]
-          }
-        });
-        await supabase.from('users').delete().eq('chat_id', chatId);
-      } catch (e) {
-        console.error('❌ Follow-up error:', e.message);
-      }
-    }, 60000);
-  } catch (e) {
-    console.error('sendResult error:', e.message);
-    await sendMessage(chatId, '⚠️ Сталася помилка при надсиланні результату.');
-  }
+    }, 60000); // 60 секунд
+
 }
 
 
