@@ -88,40 +88,65 @@ app.post('/', async (req, res) => {
   }
 
   // === 🖼 ФОТО
-  // if (data.message?.photo) {
-  //   try {
-  //     const bestPhoto = data.message.photo.at(-1);
-  //     const fileId = bestPhoto.file_id;
-  //     const name = msg.chat.first_name || "";
-  //     const username = msg.chat.username ? `@${msg.chat.username}` : chatId;
-  //     const display = name || username;
-
-  //     if (await isUserPending(chatId)) {
-  //       await sendPhotoToAdmin(chatId, fileId, display);
-  //       await sendMessage(chatId, '✅ Скріншот отримано. Очікуй підтвердження.');
-  //     } else {
-  //       await sendMessage(chatId, '⚠️ Схоже, що ти ще не натискала кнопку "Приєднатись до кімнати". Спробуй спочатку її.');
-  //     }
-  //   } catch (e) {
-  //     console.error('❌ Photo error:', e);
-  //   }
-  //   return res.send('ok');
-  // }
   if (data.message?.photo) {
-  try {
-    const bestPhoto = data.message.photo.at(-1); // найякісніше фото
-    const fileId = bestPhoto.file_id;
+    try {
+      const bestPhoto = data.message.photo.at(-1);
+      const fileId = bestPhoto.file_id;
+      const name = msg.chat.first_name || "";
+      const username = msg.chat.username ? `@${msg.chat.username}` : chatId;
+      const display = name || username;
 
-    await sendMessage(chatId, `🖼 Отримано file_id:\n<code>${fileId}</code>`, {
+      if (await isUserPending(chatId)) {
+        await sendPhotoToAdmin(chatId, fileId, display);
+        await sendMessage(chatId, '✅ Скріншот отримано. Очікуй підтвердження.');
+      } else {
+        await sendMessage(chatId, '⚠️ Схоже, що ти ще не натискала кнопку "Записатись на консультацію". Спробуй спочатку її.');
+      }
+    } catch (e) {
+      console.error('❌ Photo error:', e);
+    }
+    return res.send('ok');
+  }
+//   if (data.message?.photo) {
+//   try {
+//     const bestPhoto = data.message.photo.at(-1); // найякісніше фото
+//     const fileId = bestPhoto.file_id;
+
+//     await sendMessage(chatId, `🖼 Отримано file_id:\n<code>${fileId}</code>`, {
+//       parse_mode: 'HTML'
+//     });
+
+//   } catch (e) {
+//     console.error('❌ Photo file_id error:', e);
+//     await sendMessage(chatId, 'Сталася помилка при обробці фото 😔');
+//   }
+//   return res.send('ok');
+// }
+
+if (data.message?.document?.mime_type?.startsWith('video')) {
+  try {
+    const fileId = data.message.document.file_id;
+
+    await sendMessage(chatId, `🎥 Отримано file_id відеофайлу:\n<code>${fileId}</code>`, {
       parse_mode: 'HTML'
     });
 
   } catch (e) {
-    console.error('❌ Photo file_id error:', e);
-    await sendMessage(chatId, 'Сталася помилка при обробці фото 😔');
+    console.error('❌ Video-file file_id error:', e);
+    await sendMessage(chatId, 'Сталася помилка при обробці відеофайлу 😔');
   }
   return res.send('ok');
 }
+
+if (data.message?.video_note) {
+  const fileId = data.message.video_note.file_id;
+  await sendMessage(chatId, `⏺ file_id кружечка:\n<code>${fileId}</code>`, {
+    parse_mode: 'HTML'
+  });
+  return res.send('ok');
+}
+
+
 
 
   // === 🎭 Стікери
@@ -176,7 +201,7 @@ app.post('/', async (req, res) => {
           return res.send('ok');
         }
         const display = await getUserDisplay(chatId);
-        await sendMessage(ADMIN_ID, `🧩 Користувач <b>${escapeHTML(display)}</b> розпочав гру`, {
+        await sendMessage(ADMIN_ID, `🧩 Користувач <b>${escapeHTML(display)}</b> розпочав тест`, {
           parse_mode: 'HTML'
         });
 
