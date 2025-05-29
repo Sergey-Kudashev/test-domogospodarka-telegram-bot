@@ -88,25 +88,41 @@ app.post('/', async (req, res) => {
   }
 
   // === 🖼 ФОТО
-  if (data.message?.photo) {
-    try {
-      const bestPhoto = data.message.photo.at(-1);
-      const fileId = bestPhoto.file_id;
-      const name = msg.chat.first_name || "";
-      const username = msg.chat.username ? `@${msg.chat.username}` : chatId;
-      const display = name || username;
+  // if (data.message?.photo) {
+  //   try {
+  //     const bestPhoto = data.message.photo.at(-1);
+  //     const fileId = bestPhoto.file_id;
+  //     const name = msg.chat.first_name || "";
+  //     const username = msg.chat.username ? `@${msg.chat.username}` : chatId;
+  //     const display = name || username;
 
-      if (await isUserPending(chatId)) {
-        await sendPhotoToAdmin(chatId, fileId, display);
-        await sendMessage(chatId, '✅ Скріншот отримано. Очікуй підтвердження.');
-      } else {
-        await sendMessage(chatId, '⚠️ Схоже, що ти ще не натискала кнопку "Приєднатись до кімнати". Спробуй спочатку її.');
-      }
-    } catch (e) {
-      console.error('❌ Photo error:', e);
-    }
-    return res.send('ok');
+  //     if (await isUserPending(chatId)) {
+  //       await sendPhotoToAdmin(chatId, fileId, display);
+  //       await sendMessage(chatId, '✅ Скріншот отримано. Очікуй підтвердження.');
+  //     } else {
+  //       await sendMessage(chatId, '⚠️ Схоже, що ти ще не натискала кнопку "Приєднатись до кімнати". Спробуй спочатку її.');
+  //     }
+  //   } catch (e) {
+  //     console.error('❌ Photo error:', e);
+  //   }
+  //   return res.send('ok');
+  // }
+  if (data.message?.photo) {
+  try {
+    const bestPhoto = data.message.photo.at(-1); // найякісніше фото
+    const fileId = bestPhoto.file_id;
+
+    await sendMessage(chatId, `🖼 Отримано file_id:\n<code>${fileId}</code>`, {
+      parse_mode: 'HTML'
+    });
+
+  } catch (e) {
+    console.error('❌ Photo file_id error:', e);
+    await sendMessage(chatId, 'Сталася помилка при обробці фото 😔');
   }
+  return res.send('ok');
+}
+
 
   // === 🎭 Стікери
   if (msg.sticker) {
