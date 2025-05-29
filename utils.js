@@ -357,13 +357,15 @@ async function approvePayment(chatId) {
     await supabase.from('paid_users').insert({ id: chatId });
 
     // 2️⃣ Надсилаємо повідомлення з кнопкою
-    await sendMessage(chatId, '🎯 Оплату підтверджено! Переходь у наступну кімнату гри. 👇', {
-        reply_markup: {
-            inline_keyboard: [[
-                { text: '👉 Перейти в другу кімнату гри', url: 'https://t.me/+9me2lhd12t00MGEy' }
-            ]]
-        }
-    });
+    await sendMessage(chatId, '✨ Все зійшлося! Скоро буде продовження — чекай мій меседж 💬', 
+    //     {
+    //     reply_markup: {
+    //         inline_keyboard: [[
+    //             { text: '👉 Перейти в другу кімнату гри', url: 'https://t.me/+9me2lhd12t00MGEy' }
+    //         ]]
+    //     }
+    // }
+);
 }
 
 // async function safeSendMessage(chatId, text, options = {}) {
